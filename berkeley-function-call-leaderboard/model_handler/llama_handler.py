@@ -22,12 +22,14 @@ class LlamaHandler(OSSHandler):
         test_question,
         num_gpus,
         gpu_memory_utilization,
+        backend,
         format_prompt_func=_format_prompt,
     ):
         return super().inference(
             test_question,
             num_gpus,
             gpu_memory_utilization,
+            backend,
             format_prompt_func=format_prompt_func,
             use_default_system_prompt=True,
             include_default_formatting_prompt=True,

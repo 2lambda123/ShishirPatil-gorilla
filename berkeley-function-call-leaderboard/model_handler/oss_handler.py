@@ -11,7 +11,12 @@ from model_handler.constant import DEFAULT_SYSTEM_PROMPT, USER_PROMPT_FOR_CHAT_M
 
 class OSSHandler(BaseHandler):
     def __init__(
-        self, model_name, temperature=0.001, top_p=1, max_tokens=1000, dtype="bfloat16"
+        self,
+        model_name,
+        temperature=0.001,
+        top_p=1,
+        max_tokens=1000,
+        dtype="bfloat16",
     ) -> None:
         super().__init__(model_name, temperature, top_p, max_tokens)
         self.model_style = ModelStyle.OSSMODEL
@@ -24,7 +29,7 @@ class OSSHandler(BaseHandler):
         return prompt_string
 
     @staticmethod
-    def _batch_generate(
+    def _batch_generate_vllm(
         test_question,
         model_path,
         temperature,
@@ -65,6 +70,144 @@ class OSSHandler(BaseHandler):
         return final_ans_jsons
 
     @staticmethod
+    def _batch_generate_sglang(
+        test_question,
+        model_path,
+        temperature,
+        max_tokens,
+        top_p,
+        dtype,
+        stop_token_ids=None,
+        max_model_len=None,
+        num_gpus=8,
+        gpu_memory_utilization=0.9,
+    ):
+        import sglang as sgl
+
+        import torch
+
+        num_sms = torch.cuda.get_device_properties(0).multi_processor_count
+        if num_sms >= 80:
+            disable_flashinfer = False
+            assert (
+                sgl.__version__ >= "0.2.13"
+            ), "Please upgrade sglang to version 0.2.13 or higher"
+
+            try:
+                import flashinfer
+            except ImportError:
+                print(
+                    "Please install flashinfer to use sglang: "
+                    "https://docs.flashinfer.ai/installation.html"
+                )
+                raise
+        else:
+            disable_flashinfer = True
+
+        runtime = sgl.Runtime(
+            model_path=model_path,
+            dtype=dtype,
+            trust_remote_code=True,
+            context_length=max_model_len,
+            tp_size=num_gpus,
+            mem_fraction_static=gpu_memory_utilization,
+            enable_p2p_check=True,
+            disable_flashinfer=disable_flashinfer,
+        )
+
+        sgl.set_default_backend(runtime)
+
+        @sgl.function
+        def _sglang_gen(s, prompt):
+            s += prompt
+            s += sgl.gen("res")
+
+        arguments = [{"prompt": prompt} for prompt in test_question]
+
+        if stop_token_ids is None:
+            stop_token_ids = []
+
+        rets = _sglang_gen.run_batch(
+            arguments,
+            temperature=temperature,
+            max_new_tokens=max_tokens,
+            top_p=top_p,
+            stop_token_ids=stop_token_ids,
+            progress_bar=True,
+        )
+
+        rets = [ret["res"] for ret in rets]
+        
+        runtime.shutdown()
+
+        return rets
+
+    @staticmethod
+    def _batch_generate_sglang(
+        test_question,
+        model_path,
+        temperature,
+        max_tokens,
+        top_p,
+        dtype,
+        stop_token_ids=None,
+        max_model_len=None,
+        num_gpus=8,
+        gpu_memory_utilization=0.9,
+    ):
+        import sglang as sgl
+
+        assert (
+            sgl.__version__ >= "0.2.13"
+        ), "Please upgrade sglang to version 0.2.13 or higher"
+
+        try:
+            import flashinfer
+        except ImportError:
+            print(
+                "Please install flashinfer to use sglang: "
+                "https://docs.flashinfer.ai/installation.html"
+            )
+            raise
+
+        runtime = sgl.Runtime(
+            model_path=model_path,
+            dtype=dtype,
+            trust_remote_code=True,
+            context_length=max_model_len,
+            tp_size=num_gpus,
+            mem_fraction_static=gpu_memory_utilization,
+            enable_p2p_check=True,
+        )
+
+        sgl.set_default_backend(runtime)
+
+        @sgl.function
+        def _sglang_gen(s, prompt):
+            s += prompt
+            s += sgl.gen("res")
+
+        arguments = [{"prompt": prompt} for prompt in test_question]
+
+        if stop_token_ids is None:
+            stop_token_ids = []
+
+        rets = _sglang_gen.run_batch(
+            arguments,
+            temperature=temperature,
+            max_new_tokens=max_tokens,
+            top_p=top_p,
+            stop_token_ids=stop_token_ids,
+            progress_bar=True,
+        )
+
+        rets = [ret["res"] for ret in rets]
+        
+        runtime.shutdown()
+
+        return rets
+
+    @staticmethod
     def process_input(
         test_question,
         format_prompt_func,
@@ -96,6 +239,7 @@ class OSSHandler(BaseHandler):
         test_question,
         num_gpus,
         gpu_memory_utilization,
+        backend,
         format_prompt_func=_format_prompt,
         stop_token_ids=None,
         max_model_len=None,
@@ -109,19 +253,33 @@ class OSSHandler(BaseHandler):
             include_default_formatting_prompt,
         )
 
-        ans_jsons = self._batch_generate(
-            test_question=test_question,
-            model_path=self.model_name,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            top_p=self.top_p,
-            dtype=self.dtype,
-            stop_token_ids=stop_token_ids,
-            max_model_len=max_model_len,
-            num_gpus=num_gpus,
-            gpu_memory_utilization=gpu_memory_utilization,
-        )
-
+        if backend == "sglang":
+            ans_jsons = self._batch_generate_sglang(
+                test_question=test_question,
+                model_path=self.model_name,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                top_p=self.top_p,
+                dtype=self.dtype,
+                stop_token_ids=stop_token_ids,
+                max_model_len=max_model_len,
+                num_gpus=num_gpus,
+                gpu_memory_utilization=gpu_memory_utilization,
+            )
+        else:
+            ans_jsons = self._batch_generate_vllm(
+                test_question=test_question,
+                model_path=self.model_name,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                top_p=self.top_p,
+                dtype=self.dtype,
+                stop_token_ids=stop_token_ids,
+                max_model_len=max_model_len,
+                num_gpus=num_gpus,
+                gpu_memory_utilization=gpu_memory_utilization,
+            )
+        
         return ans_jsons, {"input_tokens": 0, "output_tokens": 0, "latency": 0}
 
     def decode_ast(self, result, language="Python"):
