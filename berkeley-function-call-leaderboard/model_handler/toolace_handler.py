@@ -9,10 +9,16 @@ from model_handler.utils import (
     func_doc_language_specific_pre_processing,
 )
 
-TOOL_PROMPT = """
-Here is a list of functions in JSON format that you can invoke:\n{functions}. 
-Should you decide to return the function call(s),Put it in the format of [func1(params_name=params_value, params_name2=params_value2...), func2(params)]\n
-NO other text MUST be included. 
+
+SYSTEM_PROMPT = """You are an expert in composing functions. You are given a question and a set of possible functions. 
+Based on the question, you will need to make one or more function/tool calls to achieve the purpose. 
+If none of the function can be used, point it out. If the given question lacks the parameters required by the function,
+also point it out.
+"""
+
+TOOL_PROMPT = """Here is a list of functions in JSON format that you can invoke:\n{functions}.
+Should you decide to return the function call(s). \nPut it in the format of [func1(params_name=params_value, params_name2=params_value2...), func2(params)]\n
+NO other text MUST be included.
 """
 
 class ToolACEHandler(OSSHandler):
@@ -44,10 +50,11 @@ class ToolACEHandler(OSSHandler):
                 question["function"], test_category
             )
             # prompt here is a list of dictionaries, one representing a role and content
-            question["question"] = system_prompt_pre_processing(
-                question["question"], 
-                DEFAULT_SYSTEM_PROMPT + "\n" + TOOL_PROMPT.format(functions=json.dumps(functions))
-            )
+            if use_default_system_prompt:
+                question["question"] = system_prompt_pre_processing(
+                    question["question"], 
+                    f"{SYSTEM_PROMPT}\n{TOOL_PROMPT.format(functions=functions)}"
+                )
 
             language_hint = _get_language_specific_hint(test_category)
             question["question"][-1]["content"] += f"\n{language_hint}"
