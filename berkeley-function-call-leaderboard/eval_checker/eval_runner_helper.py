@@ -532,6 +532,12 @@ MODEL_METADATA_MAPPING = {
         "https://huggingface.co/Salesforce/xLAM-7b-fc-r",
         "Salesforce",
         "cc-by-nc-4.0",
+    ],
+    "Team-ACE/ToolACE-8B": [
+        "ToolACE-8B (FC)",
+        "https://huggingface.co/Team-ACE/ToolACE-8B",
+        "Huawei Noah & USTC",
+        "Apache-2.0",
     ]
 }
 
